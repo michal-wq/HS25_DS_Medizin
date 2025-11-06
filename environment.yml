@@ -1,0 +1,14 @@
+name: medizin
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - numpy
+  - scipy
+  - pandas
+  - scikit-learn
+  - pyarrow
+  - h5py
+  - pip:
+      - -r requirements.txt
