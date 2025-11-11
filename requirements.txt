@@ -77,7 +77,7 @@ nest-asyncio==1.6.0
 neurokit2==0.2.12
 notebook_shim==0.2.4
 numba==0.62.1
-numpy==2.2.6
+numpy
 opencv-python==4.12.0.88
 optuna==4.5.0
 overrides==7.7.0
@@ -147,3 +147,4 @@ websocket-client==1.9.0
 wfdb==4.3.0
 yarl==1.22.0
 tensorflow>=2.18,<2.20
+feature_engine
