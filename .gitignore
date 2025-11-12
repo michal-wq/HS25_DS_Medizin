@@ -1,1 +1,28 @@
+# virtual envs
+.venv/
+venv/
+env/
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# notebooks
+.ipynb_checkpoints/
+
+# secrets
+.env
+.env.*
+
+# OS/IDE
+.DS_Store
+.vscode/
+.idea/
+
+# builds
+dist/
+build/
+
+#data
+data/
 notebooks/data/
