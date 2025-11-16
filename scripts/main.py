@@ -1,6 +1,7 @@
-from functions import target_encoder, load_raw_data, sizeof_gb_array, band_pass_filter, ecg_segmentation, enforce_min_distance
+from functions import target_encoder, load_raw_data, sizeof_gb_array
 from biosppy.signals.ecg import ecg
 import numpy as np
+import wfdb
 import scipy.stats as stats
 import pandas as pd
 import tensorflow as tf
@@ -8,9 +9,12 @@ from tensorflow.keras import layers, models
 from sklearn.model_selection import train_test_split
 
 def split_data_ecg(path, sampling_rate, cols=['scp_codes', 'strat_fold']):
+    test_fold = 10
     # Zielvariable einlesen
-    y = pd.read_csv(path + 'ptbxl_database.csv', index_col='ecg_id')[cols]
+    y = pd.read_csv(path + 'ptbxl_database.csv', index_col='ecg_id')[cols][0:65]
     y['target'] = y['scp_codes'].apply(target_encoder)
+    y_train = y[y.strat_fold != test_fold]['target']
+    y_test = y[y.strat_fold == test_fold]['target']
     print('Die Zielvariable wurde erfolgreich eingelesen und encoded')
 
     # ECG Daten einlesen
@@ -18,22 +22,11 @@ def split_data_ecg(path, sampling_rate, cols=['scp_codes', 'strat_fold']):
     X, kept_index, missing_log, error_log = load_raw_data(y, sampling_rate, path)
     print(f'Fehlende Dateien: {len(missing_log)}, andere Fehler: {len(error_log)}')
 
-    # y überschreiben
-    y = y.reindex(kept_index)  # exakt gleiche Reihenfolge wie X
-    assert len(y) == len(X), "X und y haben unterschiedliche Länge nach dem Reindexing."
-
-    print('Die ECG Daten wurden erfolgreich eingelesen')
-
-    # Split data into train and test
-    print('Datensatz wird gesplittet')
-    test_fold = 10
     X_train = X[np.where(y.strat_fold != test_fold)]
     X_test = X[np.where(y.strat_fold == test_fold)]
-    y_train = y[y.strat_fold != test_fold]['target']
-    y_test = y[y.strat_fold == test_fold]['target']
 
     print('Datensatz wurde erfolgreich gesplittet')
-    return X_train, X_test, y_train.values, y_test.values
+    return X_train, X_test, y_train, y_test
 
 def filter_and_segment_data(A, sampling_rate = 500, max_peaks = 5):
     people = []
@@ -110,7 +103,6 @@ def build_ecg_model(input_shape=(5, 300, 12), num_classes=2):
 
     return model
 
-
 def main():
     path = 'data/physionet.org/files/ptb-xl/1.0.3/'
     sampling_rate = 500
@@ -119,6 +111,7 @@ def main():
 
     # Data split
     X_train_raw, X_test_raw, y_train, y_test = split_data_ecg(path, sampling_rate, cols)
+    print(pd.Series(y_train).isna().mean()*100)
     X_train_raw, X_val_raw, y_train, y_val = train_test_split(
         X_train_raw,
         y_train,
