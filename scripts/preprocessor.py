@@ -1,7 +1,10 @@
-from functions import target_encoder, load_raw_data, sizeof_gb_array
+from functions import target_encoder, load_raw_data, sizeof_gb_array, band_pass_filter, ecg_segmentation, enforce_min_distance
+from biosppy.signals.ecg import ecg
 import numpy as np
 import scipy.stats as stats
 import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
 
 def split_data_ecg(path, sampling_rate, cols=['scp_codes', 'strat_fold']):
     # Zielvariable einlesen
@@ -31,13 +34,40 @@ def split_data_ecg(path, sampling_rate, cols=['scp_codes', 'strat_fold']):
     print('Datensatz wurde erfolgreich gesplittet')
     return X_train, X_test, y_train.values, y_test.values
 
+def filter_and_segment_data(A, batch_size, start = 0, sampling_rate = 500, max_peaks = 5):
+    people = []
+    index_error_counter = 0
+    for i in range(start, start + batch_size):
+        kanals = []
+        for k in range(A.shape[2]):
+            # es wird ite Matrix (Person) genommen und aus dem Matrix wird ganze kte ECG Signal gefiltert
+            signal = A[i, ::, k]
+            signal_ecg_data = ecg(signal=signal, sampling_rate=sampling_rate, show=False)
+            kanals.append(signal_ecg_data[4][0:max_peaks])
+        people.append(kanals)
+    return np.array(people)
+
+
 
 def main():
     path = 'data/physionet.org/files/ptb-xl/1.0.3/'
     sampling_rate = 500
     cols = ['scp_codes', 'strat_fold', 'filename_lr', 'filename_hr']
-    print('Phase 1: Split data')
+    print(f'Phase 1: Split data, sampling rate: {sampling_rate}')
+
+    # Data split
     X_train, X_test, y_train, y_test = split_data_ecg(path, sampling_rate, cols)
-    gb = sizeof_gb_array(X_train) + sizeof_gb_array(X_test) + sizeof_gb_array(y_train) + sizeof_gb_array(y_test)
-    print(f"In-Memory-Grösse von X: {gb:.3f} GB")
+
+    # Filter
+    print(X_train.shape)
+    X_train = filter_and_segment_data(X_train, 64)
+    print(X_train.shape)
+
+
+
+    """
+    
+    Hier geht es nachher weiter mit der Preprocessing pipeline
+    
+    """
 main()
