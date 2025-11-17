@@ -26,3 +26,4 @@ build/
 #data
 data/
 notebooks/data/
+Visual_approach/ekg_images_segmented_clinical_normalized_minmax/
