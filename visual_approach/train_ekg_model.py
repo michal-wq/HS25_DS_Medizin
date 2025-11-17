@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 from sklearn.model_selection import train_test_split
 from sklearn.utils import class_weight
 import tensorflow as tf
@@ -20,7 +21,7 @@ from tensorflow.keras.regularizers import l2
 LABEL_CSV_PATH = 'ekg_labels_mi.csv'
 BATCH_SIZE = 16
 EPOCHS = 40
-ACTUAL_HEIGHT = 224
+ACTUAL_HEIGHT = 448
 ACTUAL_WIDTH = 448
 INPUT_SHAPE = (ACTUAL_HEIGHT, ACTUAL_WIDTH, 1)
 
