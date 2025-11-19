@@ -19,29 +19,33 @@ from tensorflow.keras.regularizers import l2
 
 # --- KONFIGURATION ---
 LABEL_CSV_PATH = 'ekg_labels_mi.csv'
-BATCH_SIZE = 16
+BATCH_SIZE = 64  # Increased from 16 for faster training
 EPOCHS = 40
 ACTUAL_HEIGHT = 448
 ACTUAL_WIDTH = 448
 INPUT_SHAPE = (ACTUAL_HEIGHT, ACTUAL_WIDTH, 1)
+STEPS_PER_EPOCH = 1000  # Limit steps per epoch for faster iterations
+VALIDATION_STEPS = 250  # Limit validation steps
 
 # Seed für Reproduzierbarkeit
 SEED = 42
 np.random.seed(SEED)
 tf.random.set_seed(SEED)
 
-# GPU-Speicherwachstum aktivieren, um Initialisierungsfehler zu vermeiden
-gpus = tf.config.experimental.list_physical_devices('GPU')
+# GPU-Konfiguration optimieren
+gpus = tf.config.list_physical_devices('GPU')
 if gpus:
     try:
-        # Derzeit muss das Speicherwachstum für alle GPUs gleich sein
+        # Speicherwachstum aktivieren für effiziente GPU-Nutzung
         for gpu in gpus:
             tf.config.experimental.set_memory_growth(gpu, True)
-        logical_gpus = tf.config.experimental.list_logical_devices('GPU')
-        print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
+        # Verwende nur die erste GPU (kann auf beide erweitert werden)
+        tf.config.set_visible_devices(gpus[0], 'GPU')
+        print(f"✓ GPU aktiviert: {len(gpus)} verfügbar, verwende GPU:0")
     except RuntimeError as e:
-        # Das Speicherwachstum muss festgelegt werden, bevor die GPUs initialisiert wurden
-        print(e)
+        print(f"GPU-Konfigurationsfehler: {e}")
+else:
+    print("⚠️  Keine GPUs gefunden - Training läuft auf CPU (sehr langsam!)")
 
 def create_cnn_model(input_shape=INPUT_SHAPE, regularization=0.01):
     """Erstellt ein verbessertes CNN-Modell für die EKG-Klassifikation."""
@@ -100,6 +104,9 @@ if __name__ == '__main__':
     labels_df = pd.read_csv(LABEL_CSV_PATH)
     print(f"   Gesamtanzahl Samples: {len(labels_df)}")
     
+    # Spaltennamen bereinigen (Leerzeichen entfernen)
+    labels_df.columns = labels_df.columns.str.strip()
+    
     # Verfügbare Spalten anzeigen
     print(f"\n🔍 Verfügbare Spalten im CSV: {list(labels_df.columns)}")
     
@@ -154,23 +161,34 @@ if __name__ == '__main__':
     print("\n🔧 Konvertiere Labels zu Strings...")
     labels_df[label_col] = labels_df[label_col].astype(str)
     
-    # 4. Datenaufteilung (Stratifiziert)
-    print("\n🔀 Teile Daten auf (80% Train, 20% Val)...")
+    # 4. Datenaufteilung basierend auf strat_fold
+    print("\n🔀 Teile Daten auf (strat_fold=10 für Test, Rest für Train/Val)...")
+    
+    # Test-Set: strat_fold=10
+    test_df = labels_df[labels_df['strat_fold'] == 10].copy()
+    
+    # Train/Val-Set: strat_fold != 10
+    trainval_df = labels_df[labels_df['strat_fold'] != 10].copy()
+    
+    # Train/Val aufteilen (80/20)
     train_df, val_df = train_test_split(
-        labels_df,
+        trainval_df,
         test_size=0.2,
-        stratify=labels_df[label_col],
+        stratify=trainval_df[label_col],
         random_state=SEED
     )
     
     print(f"   Training:   {len(train_df)} Samples")
     print(f"   Validation: {len(val_df)} Samples")
+    print(f"   Test:       {len(test_df)} Samples")
     
-    # Klassenverteilung in Train/Val
+    # Klassenverteilung in Train/Val/Test
     train_dist = train_df[label_col].value_counts().sort_index()
     val_dist = val_df[label_col].value_counts().sort_index()
-    print(f"\n   Train - Klasse 0: {train_dist[0]}, Klasse 1: {train_dist[1]}")
-    print(f"   Val   - Klasse 0: {val_dist[0]}, Klasse 1: {val_dist[1]}")
+    test_dist = test_df[label_col].value_counts().sort_index()
+    print(f"\n   Train - Klasse 0: {train_dist.get('0', 0)}, Klasse 1: {train_dist.get('1', 0)}")
+    print(f"   Val   - Klasse 0: {val_dist.get('0', 0)}, Klasse 1: {val_dist.get('1', 0)}")
+    print(f"   Test  - Klasse 0: {test_dist.get('0', 0)}, Klasse 1: {test_dist.get('1', 0)}")
     
     # 5. Data Generators
     print("\n🖼️  Erstelle Data Generators...")
@@ -201,8 +219,21 @@ if __name__ == '__main__':
         classes=['0', '1']  # Explizite Klassenreihenfolge
     )
     
+    test_generator = datagen.flow_from_dataframe(
+        dataframe=test_df,
+        x_col=filepath_col,
+        y_col=label_col,
+        target_size=(ACTUAL_HEIGHT, ACTUAL_WIDTH),
+        batch_size=BATCH_SIZE,
+        class_mode='binary',
+        color_mode='grayscale',
+        shuffle=False,
+        classes=['0', '1']  # Explizite Klassenreihenfolge
+    )
+    
     print(f"   ✓ Train Generator: {len(train_generator)} Batches")
     print(f"   ✓ Val Generator:   {len(val_generator)} Batches")
+    print(f"   ✓ Test Generator:  {len(test_generator)} Batches")
     
     # 6. Modell erstellen
     print("\n🏗️  Erstelle CNN-Modell...")
@@ -258,17 +289,34 @@ if __name__ == '__main__':
     # 8. Training
     print("\n🚀 Starte Training...")
     print("-" * 60)
+    print(f"   Batch Size: {BATCH_SIZE}")
+    print(f"   Steps per Epoch: {STEPS_PER_EPOCH}")
+    print(f"   Validation Steps: {VALIDATION_STEPS}")
+    print(f"   Total Epochs: {EPOCHS}")
+    print(f"   Samples per Epoch: ~{STEPS_PER_EPOCH * BATCH_SIZE:,}")
+    print("-" * 60)
+    
+    import time
+    start_time = time.time()
     
     history = model.fit(
         train_generator,
-        steps_per_epoch=len(train_generator),
+        steps_per_epoch=STEPS_PER_EPOCH,  # Limit steps for faster epochs
         epochs=EPOCHS,
         validation_data=val_generator,
-        validation_steps=len(val_generator),
+        validation_steps=VALIDATION_STEPS,  # Limit validation steps
         class_weight=class_weight_dict,
         callbacks=callbacks,
         verbose=1
     )
+    
+    end_time = time.time()
+    training_duration = end_time - start_time
+    hours = int(training_duration // 3600)
+    minutes = int((training_duration % 3600) // 60)
+    seconds = int(training_duration % 60)
+    
+    print(f"\n⏱️  Trainingsdauer: {hours}h {minutes}m {seconds}s ({training_duration:.2f} Sekunden)")
     
     # 9. Ergebnisse speichern
     print("\n💾 Speichere finales Modell...")
@@ -301,4 +349,15 @@ if __name__ == '__main__':
     print(f"   Precision: {best_metrics['val_precision']:.4f}")
     print(f"   Recall:    {best_metrics['val_recall']:.4f}")
     print(f"   AUC:       {best_metrics['val_auc']:.4f}")
+    
+    # 12. Evaluation auf Test-Set
+    print("\n🧪 Evaluiere auf Test-Set (strat_fold=10)...")
+    test_results = model.evaluate(test_generator, verbose=1)
+    
+    print("\n📊 Test-Set Metriken:")
+    print(f"   Loss:      {test_results[0]:.4f}")
+    print(f"   Accuracy:  {test_results[1]:.4f}")
+    print(f"   Precision: {test_results[2]:.4f}")
+    print(f"   Recall:    {test_results[3]:.4f}")
+    print(f"   AUC:       {test_results[4]:.4f}")
     print("=" * 60)

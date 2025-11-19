@@ -26,5 +26,5 @@ build/
 #data
 data/
 notebooks/data/
-visual_approach/ekg_images_segmented_clinical_normalized_minmax/
-visual_approach/ekg_images_beat_segmented/
+
+visual_approach/ekg_images_beat_segmented_500hz/
