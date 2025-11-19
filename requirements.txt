@@ -148,3 +148,4 @@ wfdb==4.3.0
 yarl==1.22.0
 tensorflow>=2.18,<2.20
 feature_engine
+peakutils
