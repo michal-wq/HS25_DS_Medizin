@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 import os
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+os.environ['TF_GPU_THREAD_MODE'] = 'gpu_private'
 from sklearn.model_selection import train_test_split
 from sklearn.utils import class_weight
 import tensorflow as tf
@@ -16,10 +17,11 @@ from tensorflow.keras.callbacks import (
     EarlyStopping, ReduceLROnPlateau, ModelCheckpoint
 )
 from tensorflow.keras.regularizers import l2
+import tensorflow.keras.backend as K
 
 # --- KONFIGURATION ---
 LABEL_CSV_PATH = 'ekg_labels_mi.csv'
-BATCH_SIZE = 64  # Increased from 16 for faster training
+BATCH_SIZE = 32  # Reduced from 64 to avoid GPU OOM errors
 EPOCHS = 40
 ACTUAL_HEIGHT = 448
 ACTUAL_WIDTH = 448
@@ -31,6 +33,37 @@ VALIDATION_STEPS = 250  # Limit validation steps
 SEED = 42
 np.random.seed(SEED)
 tf.random.set_seed(SEED)
+
+def focal_loss(gamma=2.0, alpha=0.25):
+    """Focal Loss für Klassenungleichgewicht - fokussiert auf schwierige Beispiele."""
+    def focal_loss_fixed(y_true, y_pred):
+        epsilon = K.epsilon()
+        y_pred = K.clip(y_pred, epsilon, 1.0 - epsilon)
+        
+        # Focal Loss Formel
+        ce = -y_true * K.log(y_pred)
+        focal_weight = alpha * K.pow(1 - y_pred, gamma)
+        focal_loss = focal_weight * ce
+        
+        # Für negative Klasse
+        ce_neg = -(1 - y_true) * K.log(1 - y_pred)
+        focal_weight_neg = (1 - alpha) * K.pow(y_pred, gamma)
+        focal_loss_neg = focal_weight_neg * ce_neg
+        
+        return K.mean(focal_loss + focal_loss_neg)
+    return focal_loss_fixed
+
+def f1_score(y_true, y_pred):
+    """F1-Score Metrik für Training."""
+    y_pred = K.round(y_pred)
+    tp = K.sum(K.cast(y_true * y_pred, 'float'), axis=0)
+    fp = K.sum(K.cast((1 - y_true) * y_pred, 'float'), axis=0)
+    fn = K.sum(K.cast(y_true * (1 - y_pred), 'float'), axis=0)
+    
+    precision = tp / (tp + fp + K.epsilon())
+    recall = tp / (tp + fn + K.epsilon())
+    f1 = 2 * precision * recall / (precision + recall + K.epsilon())
+    return f1
 
 # GPU-Konfiguration optimieren
 gpus = tf.config.list_physical_devices('GPU')
@@ -145,17 +178,16 @@ if __name__ == '__main__':
     if 1 in class_distribution.index:
         print(f"   Klasse 1 (MI):      {class_distribution[1]} ({class_distribution[1]/len(labels_df)*100:.1f}%)")
     
-    # 2. Klassen-Gewichte berechnen
-    class_labels = labels_df[label_col].unique()
-    computed_weights = class_weight.compute_class_weight(
-        class_weight='balanced',
-        classes=np.sort(class_labels),
-        y=labels_df[label_col]
-    )
-    class_weight_dict = dict(enumerate(computed_weights))
-    print(f"\n⚖️  Berechnete Klassen-Gewichte:")
+    # 2. Klassen-Gewichte berechnen (erhöht für MI-Klasse)
+    # Verwende manuelles Gewicht 1:4 statt balanced um False Negatives stark zu bestrafen
+    class_weight_dict = {
+        0: 1.0,   # Kein MI - normales Gewicht
+        1: 4.0    # MI - 4x höheres Gewicht (False Negatives sind gefährlich!)
+    }
+    print(f"\n⚖️  Klassen-Gewichte (manuell optimiert):")
     for cls, weight in class_weight_dict.items():
         print(f"   Klasse {cls}: {weight:.4f}")
+    print("   → MI-Klasse erhält 4x Gewicht um Recall zu verbessern")
     
     # 3. Labels zu Strings konvertieren (für Keras flow_from_dataframe)
     print("\n🔧 Konvertiere Labels zu Strings...")
@@ -244,12 +276,13 @@ if __name__ == '__main__':
     
     model.compile(
         optimizer=optimizer,
-        loss='binary_crossentropy',
+        loss=focal_loss(gamma=2.0, alpha=0.25),  # Focal Loss statt Binary Crossentropy
         metrics=[
             'accuracy',
             tf.keras.metrics.Precision(name='precision'),
             tf.keras.metrics.Recall(name='recall'),
-            tf.keras.metrics.AUC(name='auc')
+            tf.keras.metrics.AUC(name='auc'),
+            f1_score
         ]
     )
     
@@ -258,9 +291,9 @@ if __name__ == '__main__':
     
     # 7. Callbacks für besseres Training
     callbacks = [
-        # Early Stopping
+        # Early Stopping - fokussiert auf Recall (wichtiger als AUC!)
         EarlyStopping(
-            monitor='val_auc',
+            monitor='val_recall',
             patience=10,
             mode='max',
             restore_best_weights=True,
@@ -276,10 +309,10 @@ if __name__ == '__main__':
             verbose=1
         ),
         
-        # Model Checkpoint
+        # Model Checkpoint - speichere bestes Modell basierend auf Recall
         ModelCheckpoint(
             'best_ekg_mi_model.keras',
-            monitor='val_auc',
+            monitor='val_recall',
             mode='max',
             save_best_only=True,
             verbose=1
@@ -339,16 +372,18 @@ if __name__ == '__main__':
     print(f"   Precision: {final_metrics['val_precision']:.4f}")
     print(f"   Recall:    {final_metrics['val_recall']:.4f}")
     print(f"   AUC:       {final_metrics['val_auc']:.4f}")
+    print(f"   F1-Score:  {final_metrics['val_f1_score']:.4f}")
     
-    # 11. Beste Metriken (aus Early Stopping)
-    best_epoch = history_df['val_auc'].idxmax()
-    print(f"\n🏆 Beste Metriken (Epoch {best_epoch + 1}):")
+    # 11. Beste Metriken (aus Early Stopping - basierend auf Recall)
+    best_epoch = history_df['val_recall'].idxmax()
+    print(f"\n🏆 Beste Metriken (Epoch {best_epoch + 1}, höchster Recall):")
     best_metrics = history_df.iloc[best_epoch]
     print(f"   Loss:      {best_metrics['val_loss']:.4f}")
     print(f"   Accuracy:  {best_metrics['val_accuracy']:.4f}")
     print(f"   Precision: {best_metrics['val_precision']:.4f}")
     print(f"   Recall:    {best_metrics['val_recall']:.4f}")
     print(f"   AUC:       {best_metrics['val_auc']:.4f}")
+    print(f"   F1-Score:  {best_metrics['f1_score']:.4f}")
     
     # 12. Evaluation auf Test-Set
     print("\n🧪 Evaluiere auf Test-Set (strat_fold=10)...")
@@ -360,4 +395,20 @@ if __name__ == '__main__':
     print(f"   Precision: {test_results[2]:.4f}")
     print(f"   Recall:    {test_results[3]:.4f}")
     print(f"   AUC:       {test_results[4]:.4f}")
+    print(f"   F1-Score:  {test_results[5]:.4f}")
+    
+    # Interpretation der Metriken
+    print("\n💡 Interpretation:")
+    if test_results[3] < 0.6:  # Recall < 60%
+        print("   ⚠️  Recall ist noch niedrig - viele MI-Fälle werden übersehen")
+    elif test_results[3] < 0.75:
+        print("   ⚡ Recall ist akzeptabel - weiteres Tuning möglich")
+    else:
+        print("   ✅ Recall ist gut - Modell erkennt meiste MI-Fälle")
+    
+    if test_results[2] > 0.7:  # Precision > 70%
+        print("   ✅ Precision ist gut - wenige Fehlalarme")
+    else:
+        print("   ⚠️  Precision könnte besser sein - viele Fehlalarme")
+    
     print("=" * 60)
