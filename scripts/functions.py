@@ -9,6 +9,7 @@ from biosppy.signals.ecg import ecg
 import tensorflow as tf
 from tensorflow.keras import layers, models
 import numpy as np
+import keras_tuner as kt
 from sklearn.metrics import (
     accuracy_score,
     precision_score,
@@ -435,3 +436,201 @@ def test_model(model, X_test, y_test, batch_size=32, average='binary'):
         "auc": auc,
         "f1": f1,
     }
+
+def sample_hyperparams(rng):
+    """
+    Zufällige Hyperparameter-Kombi ziehen.
+
+    Hyperparameter entsprechend deiner Vorgabe:
+    - number of layers        -> num_conv_layers
+    - filter size             -> kernel_time[i]
+    - number of feature maps  -> filters[i]
+    - stride                  -> stride_time[i]
+    - pooling regions/sizes   -> pool_time[i]
+    - units in FC layer       -> dense_units
+    """
+    num_conv_layers = rng.randint(2, 5)  # {2, 3, 4}
+
+    cfg = {
+        "num_conv_layers": num_conv_layers,
+        "filters": [],
+        "kernel_time": [],
+        "stride_time": [],
+        "pool_time": [],
+        "dense_units": rng.choice([64, 128, 256, 512]),
+        "dropout_rate": rng.uniform(0.2, 0.6),
+        "learning_rate": rng.choice([1e-4, 3e-4, 1e-3]),
+    }
+
+    for i in range(num_conv_layers):
+        cfg["filters"].append(rng.choice([32, 64, 96, 128, 192, 256]))
+        cfg["kernel_time"].append(rng.choice([3, 5, 7, 9]))
+        cfg["stride_time"].append(rng.choice([1, 2]))
+        cfg["pool_time"].append(rng.choice([2, 3, 4]))
+
+    return cfg
+
+def build_ecg_model_from_config(cfg, input_shape, num_classes):
+    """
+    CNN bauen entsprechend der Hyperparameter-Konfiguration.
+    """
+    inputs = layers.Input(shape=input_shape)
+    x = inputs
+
+    # Convolutional Layers
+    for i in range(cfg["num_conv_layers"]):
+        x = layers.Conv2D(
+            filters=cfg["filters"][i],                 # number of feature maps
+            kernel_size=(3, cfg["kernel_time"][i]),   # filter size (Zeit)
+            strides=(1, cfg["stride_time"][i]),       # stride in Zeit
+            padding="same",
+            activation="relu",
+            name=f"conv_{i}",
+        )(x)
+        x = layers.BatchNormalization(name=f"bn_{i}")(x)
+        x = layers.MaxPooling2D(
+            pool_size=(1, cfg["pool_time"][i]),       # pooling size (Zeit)
+            strides=(1, cfg["pool_time"][i]),
+            padding="same",
+            name=f"pool_{i}",
+        )(x)
+
+    # Global Pooling
+    x = layers.GlobalAveragePooling2D(name="gap")(x)
+
+    # Fully Connected Layer
+    x = layers.Dense(cfg["dense_units"], activation="relu", name="fc1")(x)
+    x = layers.Dropout(cfg["dropout_rate"], name="dropout")(x)
+
+    outputs = layers.Dense(num_classes, activation="softmax", name="output")(x)
+
+    model = models.Model(inputs=inputs, outputs=outputs)
+
+    model.compile(
+        optimizer=tf.keras.optimizers.Adam(learning_rate=cfg["learning_rate"]),
+        loss="sparse_categorical_crossentropy",
+        metrics=["accuracy"],
+    )
+
+    return model
+
+def run_random_search(X_train, y_train, X_val, y_val, input_shape, num_classes, num_trials=20):
+    """
+    Random Search über num_trials Stichproben.
+    """
+    results = []
+
+    X_train = X_train.astype("float32")
+    X_val = X_val.astype("float32")
+
+    early_stop = tf.keras.callbacks.EarlyStopping(
+        monitor="val_loss", patience=5, restore_best_weights=True
+    )
+
+    for t in range(num_trials):
+        cfg = sample_hyperparams(rng)
+        print(f"\nTrial {t+1}/{num_trials}")
+        print("Config:", cfg)
+
+        model = build_ecg_model_from_config(
+            cfg, input_shape=input_shape, num_classes=num_classes
+        )
+
+        history = model.fit(
+            X_train,
+            y_train,
+            validation_data=(X_val, y_val),
+            epochs=30,
+            batch_size=64,
+            verbose=0,
+            callbacks=[early_stop],
+        )
+
+        best_val_acc = float(max(history.history["val_accuracy"]))
+        print(f"Best val_accuracy in this trial: {best_val_acc:.4f}")
+        results.append((cfg, best_val_acc))
+
+    best_cfg, best_score = max(results, key=lambda x: x[1])
+    print("\n============================")
+    print("Beste Val-Accuracy:", best_score)
+    print("Beste Hyperparameter:", best_cfg)
+    print("============================")
+
+    # Optional: Bestes Modell nochmal trainieren
+    best_model = build_ecg_model_from_config(
+        best_cfg, input_shape=input_shape, num_classes=num_classes
+    )
+    best_model.fit(
+        X_train,
+        y_train,
+        validation_data=(X_val, y_val),
+        epochs=30,
+        batch_size=64,
+        verbose=1,
+        callbacks=[early_stop],
+    )
+
+    return best_model, best_cfg, best_score
+
+def make_gradcam_heatmap(img_array, model, last_conv_layer_name, class_index=None,normalize=True):
+    """
+    Berechnet eine Grad-CAM-Heatmap für ein einzelnes ECG-Beispiel.
+
+    Parameters
+    ----------
+    img_array : np.ndarray
+        Input mit Shape (1, H, W, C) – also bereits gebatcht!
+    model : tf.keras.Model
+        Dein trainiertes CNN-Modell.
+    last_conv_layer_name : str
+        Name der letzten Conv2D-Schicht, z.B. 'conv2d_2' o.ä.
+    class_index : int oder None
+        Zielklasse, für die die Heatmap berechnet wird.
+        Wenn None -> wird die vorhergesagte Klasse verwendet.
+    normalize : bool
+        Wenn True, wird die Heatmap auf [0, 1] skaliert.
+
+    Returns
+    -------
+    heatmap : np.ndarray
+        2D-Array mit Shape (H_conv, W_conv) – ggf. später hochskalierbar.
+    """
+
+    # Modell, das Ausgaben der letzten Conv-Schicht und des Outputs liefert
+    last_conv_layer = model.get_layer(last_conv_layer_name)
+    grad_model = tf.keras.models.Model(
+        inputs=model.inputs,
+        outputs=[last_conv_layer.output, model.output],
+    )
+
+    # Gradienten berechnen
+    with tf.GradientTape() as tape:
+        conv_outputs, predictions = grad_model({"input_layer": img_array})
+
+        if class_index is None:
+            class_index = tf.argmax(predictions[0])
+        class_channel = predictions[:, class_index]
+
+    # Gradienten der Klassenscore-Funktion wrt. Feature Maps
+    grads = tape.gradient(class_channel, conv_outputs)
+
+    # Gradienten über räumliche Dimensionen mitteln -> Gewichte
+    # conv_outputs shape: (1, H_conv, W_conv, N_filters)
+    # grads shape:        (1, H_conv, W_conv, N_filters)
+    pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))  # (N_filters,)
+
+    conv_outputs = conv_outputs[0]  # (H_conv, W_conv, N_filters)
+
+    # Jede Feature Map mit ihrem Gewicht skalieren und aufsummieren
+    heatmap = tf.reduce_sum(conv_outputs * pooled_grads, axis=-1)  # (H_conv, W_conv)
+
+    # ReLU, damit nur positive Beiträge bleiben
+    heatmap = tf.nn.relu(heatmap)
+
+    heatmap = heatmap.numpy()
+
+    if normalize:
+        eps = 1e-8
+        heatmap = (heatmap - np.min(heatmap)) / (np.max(heatmap) + eps)
+
+    return heatmap
