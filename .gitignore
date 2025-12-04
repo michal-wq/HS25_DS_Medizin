@@ -28,3 +28,4 @@ data/
 notebooks/data/
 
 visual_approach/ekg_images_beat_segmented_500hz/
+visual_approach/ekg_images_224x224/

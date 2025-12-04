@@ -12,13 +12,13 @@ from Funktionen import apply_bandpass_filter
 # Basispfad zu den EKG-Daten (alle records500 Unterordner)
 BASE_DIR = '../notebooks/data/physionet.org/files/ptb-xl/1.0.3/records500'
 # Pfad, in dem die fertigen Bilder gespeichert werden (mit Unterordnern)
-OUTPUT_DIR = 'ekg_images_beat_segmented_500hz'
+OUTPUT_DIR = 'ekg_images_224x224'  # Optimierte Größe für CNN
 
 # ML-OPTIMIERTE PARAMETER
 NOISE_FREQ = 50.0   # Netzbrummen Frequenz (50.0 Hz EU)
 SEGMENT_LENGTH_SEC = 0.8 # Dauer jedes Segments in Sekunden (Einzelner Herzschlag)
 Y_LIM_MINMAX = 1.1  # Feste Y-Achsen-Grenze für normalisierte Daten [-1.1, 1.1]
-DPI = 200           # Bildauflösung (Dots per Inch)
+DPI = 100           # Bildauflösung - 100 DPI für 224x224 Output (~2.24 Zoll)
 FIGSIZE = (2.24, 2.24) # Figurgröße für das 6x2-Layout (Breite x Höhe in Zoll)
 
 # Definiere den Index des Referenz-Leads für die R-Peak-Erkennung (Lead II ist typisch)

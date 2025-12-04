@@ -1,7 +1,7 @@
 nohup: ignoring input
 ============================================================
 Starte EKG-Segmentierung: 0.8s pro Beat.
-Zielordner: ekg_images_beat_segmented_500hz
+Zielordner: ekg_images_224x224
 ============================================================
 📁 Gefundene Unterordner: 22
 
@@ -142,5 +142,5 @@ Zielordner: ekg_images_beat_segmented_500hz
 📊 Statistik:
    - Records verarbeitet: 21799
    - Herzschläge gespeichert: 247965
-   - Output-Ordner: ekg_images_beat_segmented_500hz
+   - Output-Ordner: ekg_images_224x224
 ============================================================
