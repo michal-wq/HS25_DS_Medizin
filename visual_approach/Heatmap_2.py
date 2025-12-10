@@ -167,14 +167,6 @@ avg_heatmap_1, example_img_1, preds_1 = compute_average_heatmap(class_1_df, "MI"
 # Create paper-ready figure
 print("\n📊 Erstelle publikationsreife Visualisierung...")
 
-fig = plt.figure(figsize=(14, 11))
-gs = GridSpec(3, 3, figure=fig, hspace=0.3, wspace=0.25, 
-              left=0.05, right=0.95, top=0.92, bottom=0.05)
-
-# Title
-fig.suptitle('Grad-CAM Analyse des Deep Learning Modells zur Myokardinfarkt-Erkennung',
-             fontsize=16, fontweight='bold', y=0.98)
-
 # Helper function to add ECG lead labels
 def add_ecg_labels(ax, img_shape=(224, 224)):
     """Add 12-lead ECG labels to the image."""
@@ -195,82 +187,39 @@ def add_ecg_labels(ax, img_shape=(224, 224)):
                            edgecolor='red',
                            alpha=0.8))
 
-# Row 1: No MI (Class 0)
-# Original ECG
-ax1 = fig.add_subplot(gs[0, 0])
-if example_img_0 is not None:
-    ax1.imshow(example_img_0, cmap='gray')
-    add_ecg_labels(ax1)
-ax1.set_title('A) Kein MI - Original EKG', fontsize=12, fontweight='bold', loc='left')
-ax1.axis('off')
-
-# Heatmap
-ax2 = fig.add_subplot(gs[0, 1])
-if avg_heatmap_0 is not None:
-    im1 = ax2.imshow(avg_heatmap_0, cmap='jet', alpha=0.8)
-    plt.colorbar(im1, ax=ax2, fraction=0.046, pad=0.04, label='Aktivierung')
-ax2.set_title(f'B) Grad-CAM Heatmap (n={len(preds_0)})', fontsize=12, fontweight='bold', loc='left')
-ax2.axis('off')
-
-# Overlay
-ax3 = fig.add_subplot(gs[0, 2])
+# ===== Bild C: Kein MI - Überlagerung mit Ableitungsbeschriftung =====
 if avg_heatmap_0 is not None and example_img_0 is not None:
+    fig_c = plt.figure(figsize=(8, 6))
+    ax_c = fig_c.add_subplot(111)
+    
     heatmap_colored = cv2.applyColorMap(np.uint8(255 * avg_heatmap_0), cv2.COLORMAP_JET)
     ekg_rgb = cv2.cvtColor(example_img_0, cv2.COLOR_GRAY2RGB)
     superimposed = cv2.addWeighted(ekg_rgb, 0.6, heatmap_colored, 0.4, 0)
-    ax3.imshow(cv2.cvtColor(superimposed, cv2.COLOR_BGR2RGB))
-    add_ecg_labels(ax3)
-ax3.set_title('C) Überlagerung mit Ableitungsbeschriftung', fontsize=12, fontweight='bold', loc='left')
-ax3.axis('off')
+    ax_c.imshow(cv2.cvtColor(superimposed, cv2.COLOR_BGR2RGB))
+    add_ecg_labels(ax_c)
+    ax_c.axis('off')
+    
+    plt.savefig('bild_c_kein_mi_overlay.png', dpi=300, bbox_inches='tight')
+    plt.close(fig_c)
+    print("💾 Bild C gespeichert:")
+    print("   - bild_c_kein_mi_overlay.png (300 DPI)")
 
-# Row 2: MI (Class 1)
-# Original ECG
-ax5 = fig.add_subplot(gs[1, 0])
-if example_img_1 is not None:
-    ax5.imshow(example_img_1, cmap='gray')
-    add_ecg_labels(ax5)
-ax5.set_title('D) MI - Original EKG', fontsize=12, fontweight='bold', loc='left')
-ax5.axis('off')
-
-# Heatmap
-ax6 = fig.add_subplot(gs[1, 1])
-if avg_heatmap_1 is not None:
-    im2 = ax6.imshow(avg_heatmap_1, cmap='jet', alpha=0.8)
-    plt.colorbar(im2, ax=ax6, fraction=0.046, pad=0.04, label='Aktivierung')
-ax6.set_title(f'E) Grad-CAM Heatmap (n={len(preds_1)})', fontsize=12, fontweight='bold', loc='left')
-ax6.axis('off')
-
-# Overlay
-ax7 = fig.add_subplot(gs[1, 2])
+# ===== Bild F: MI - Überlagerung mit Ableitungsbeschriftung =====
 if avg_heatmap_1 is not None and example_img_1 is not None:
+    fig_f = plt.figure(figsize=(8, 6))
+    ax_f = fig_f.add_subplot(111)
+    
     heatmap_colored = cv2.applyColorMap(np.uint8(255 * avg_heatmap_1), cv2.COLORMAP_JET)
     ekg_rgb = cv2.cvtColor(example_img_1, cv2.COLOR_GRAY2RGB)
     superimposed = cv2.addWeighted(ekg_rgb, 0.6, heatmap_colored, 0.4, 0)
-    ax7.imshow(cv2.cvtColor(superimposed, cv2.COLOR_BGR2RGB))
-    add_ecg_labels(ax7)
-ax7.set_title('F) Überlagerung mit Ableitungsbeschriftung', fontsize=12, fontweight='bold', loc='left')
-ax7.axis('off')
-
-# Row 3: Comparison - centered with white space on sides
-ax9 = fig.add_subplot(gs[2, 1])
-if avg_heatmap_0 is not None and avg_heatmap_1 is not None:
-    # Difference heatmap
-    diff_heatmap = avg_heatmap_1 - avg_heatmap_0
-    im3 = ax9.imshow(diff_heatmap, cmap='RdBu_r', vmin=-0.5, vmax=0.5)
-    cbar = plt.colorbar(im3, ax=ax9, fraction=0.046, pad=0.04)
-    cbar.set_label('Aktivierungsdifferenz\nRot = höher bei MI\nBlau = höher bei Kein-MI', 
-                   rotation=270, labelpad=25)
-ax9.set_title('G) Differentielle Aktivierungskarte (MI vs. Kein MI)', 
-             fontsize=12, fontweight='bold', loc='left', pad=10)
-ax9.axis('off')
-
-plt.savefig('paper_ready_gradcam_visualization.png', dpi=300, bbox_inches='tight')
-plt.savefig('paper_ready_gradcam_visualization.pdf', dpi=300, bbox_inches='tight')
-print("\n💾 Gespeichert als:")
-print("   - paper_ready_gradcam_visualization.png (300 DPI)")
-print("   - paper_ready_gradcam_visualization.pdf (Vektorformat)")
-plt.show()
-
+    ax_f.imshow(cv2.cvtColor(superimposed, cv2.COLOR_BGR2RGB))
+    add_ecg_labels(ax_f)
+    ax_f.axis('off')
+    
+    plt.savefig('bild_f_mi_overlay.png', dpi=300, bbox_inches='tight')
+    plt.close(fig_f)
+    print("💾 Bild F gespeichert:")
+    print("   - bild_f_mi_overlay.png (300 DPI)")
 print("\n" + "=" * 70)
-print("✅ Publikationsreife Visualisierung abgeschlossen!")
+print("✅ Einzelbilder C und F erfolgreich gespeichert!")
 print("=" * 70)
